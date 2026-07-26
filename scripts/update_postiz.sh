@@ -73,6 +73,17 @@ fi
 echo "[postiz-update] recuperation de l'image ${VERSION_CONFIGUREE:-actuelle}..."
 compose pull postiz
 
+# down PUIS up, et non un simple `up -d` : recreer le conteneur postiz pendant
+# que Postgres/Redis/Temporal tournent deja declenche un blocage au demarrage de
+# l'orchestrator (deadlock sur futex au chargement des modules natifs, process
+# "online" sous pm2 mais port 3002 jamais ouvert, 0 % CPU, aucun log NestJS).
+# Reproduit 2 fois sur 2 en preprod avec `up` seul, et 0 fois sur 2 avec
+# down+up : apres un down, postiz attend les healthchecks de ses dependances,
+# ce qui decale son demarrage et evite la course.
+# `down` sans -v conserve les volumes nommes et les bind mounts : aucune perte.
+echo "[postiz-update] arret de la stack..."
+compose --profile debug down
+
 echo "[postiz-update] redemarrage de la stack..."
 compose up -d
 

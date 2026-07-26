@@ -22,6 +22,14 @@ POSTIZ_DOMAIN=postiz.example.com
 # v1.47.0 ne l'a PAS (verifie : apps/ contient encore "cron"/"workers" a ce
 # tag, pas "orchestrator", et RUN_CRON n'existe dans aucun fichier). Ne
 # jamais epingler une version anterieure a v2.x avec ce docker-compose.yml.
+#
+# PAS DE TAG FLOTTANT DISPONIBLE : contrairement a "ghost:6-alpine" (qui suit
+# les correctifs de la majeure 6), le CI de Postiz ne publie que le nom exact
+# du tag git et "latest" -- verifie dans le registre ghcr : sur 540 tags,
+# aucun "v2.22", "v2" ni "2". Ecrire POSTIZ_VERSION=v2.22 donnerait un
+# "manifest unknown" au demarrage. Le choix est donc binaire : version figee
+# avec bump manuel (ce qu'on fait), ou "latest" avec risque de saut de
+# majeure non annonce.
 POSTIZ_VERSION=v2.22.1
 
 # Secret de signature des sessions JWT. Generer avec : openssl rand -hex 32
@@ -50,10 +58,22 @@ API_LIMIT=90
 # devient OBLIGATOIRE pour les comptes locaux. Creer le compte admin AVANT de
 # remplir cette section, ou verifier que les identifiants SMTP fonctionnent
 # avant (sinon : compte cree mais jamais active, verrouille dehors).
+#
+# EMAIL_PROVIDER n'accepte QUE "nodemailer" ou "resend". Toute autre valeur
+# (y compris "mailgun", "smtp", "gmail") retombe SILENCIEUSEMENT sur un
+# provider qui n'envoie rien. Mailgun/Brevo/OVH sont des HOTES SMTP : le
+# provider reste "nodemailer".
+#
+# REGION MAILGUN : un domaine cree dans la region EU ne s'authentifie PAS sur
+# le point d'entree US. Les deux se ressemblent, et l'erreur est un simple
+# "535 Authentication failed" qui fait croire a un mauvais mot de passe :
+#   region US -> smtp.mailgun.org
+#   region EU -> smtp.eu.mailgun.org        <-- cas de cette installation
+# La region est visible dans le tableau de bord Mailgun, a cote du domaine.
 EMAIL_PROVIDER=
-EMAIL_HOST=smtp.mailgun.org
-EMAIL_PORT=587
-EMAIL_SECURE=false
+EMAIL_HOST=smtp.eu.mailgun.org
+EMAIL_PORT=465
+EMAIL_SECURE=true
 EMAIL_USER=
 EMAIL_PASS=
 EMAIL_FROM_ADDRESS=
@@ -91,6 +111,38 @@ SLACK_SIGNING_SECRET=
 MASTODON_URL=https://mastodon.social
 MASTODON_CLIENT_ID=
 MASTODON_CLIENT_SECRET=
+
+# --- Files de taches Temporal a NE PAS demarrer (reduction de l'empreinte) ---
+#
+# Par defaut, l'orchestrator demarre UN worker Temporal par reseau social
+# supporte (~33), chacun avec son bac a sable de workflow et son bundle webpack
+# de 3 Mo -- que le reseau soit connecte ou non. Mesure en preprod, avec un seul
+# canal (Mastodon) :
+#
+#                        sans EXCLUDE_QUEUE   avec    gain
+#   conteneur postiz          2,41 Gio      1,25 Gio  -48 %
+#   process orchestrator      1585 Mo        497 Mo   -69 %
+#   stack complete            ~2,7 Gio      ~1,45 Gio -46 %
+#   demarrage (healthy)          90 s          40 s   -55 %
+#
+# ATTENTION, PANNE SILENCIEUSE : si tu connectes plus tard un canal dont la file
+# est exclue, l'interface acceptera de programmer des posts mais AUCUN worker ne
+# les traitera -- ils ne partiront jamais, sans erreur. Mettre cette liste a jour
+# a chaque nouveau canal. Dans le doute, garder les files des reseaux envisages a
+# moyen terme : le gain marginal par file est faible.
+#
+# NE JAMAIS exclure "main" : c'est la file des workflows generaux (rattrapage
+# RUN_CRON, envoi des emails). Elle n'est pas dans la liste ci-dessous.
+#
+# Files disponibles (identifiant de chaque provider ; celles contenant un tiret,
+# comme linkedin-page, sont deja ignorees par Postiz) :
+#   bluesky devto discord dribbble facebook gmb hashnode instagram kick lemmy
+#   linkedin listmonk mastodon medium mewe moltbook nostr pinterest reddit skool
+#   slack telegram threads tiktok tumblr twitch vk whop wordpress wrapcast x
+#   youtube
+#
+# Exemple ci-dessous : tout est exclu SAUF mastodon (et main). Adapter.
+EXCLUDE_QUEUE=bluesky,devto,discord,dribbble,facebook,gmb,hashnode,instagram,kick,lemmy,linkedin,listmonk,medium,mewe,moltbook,nostr,pinterest,reddit,skool,slack,telegram,threads,tiktok,tumblr,twitch,vk,whop,wordpress,wrapcast,x,youtube
 
 # --- Temporal UI (profile "debug" uniquement, jamais expose via Traefik) ---
 # Port loopback local. 8080 est deliberement EVITE : deja utilise par

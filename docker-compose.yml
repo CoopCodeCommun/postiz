@@ -13,6 +13,10 @@ services:
       TEMPORAL_ADDRESS: 'temporal:7233'
       TEMPORAL_NAMESPACE: 'default'
       RUN_CRON: 'true'
+      # Files de taches Temporal a NE PAS demarrer (voir env_example).
+      # L'orchestrator cree sinon un worker par reseau social (~33), chacun avec
+      # son bac a sable de workflow et son bundle webpack de 3 Mo.
+      EXCLUDE_QUEUE: '${EXCLUDE_QUEUE:-}'
       IS_GENERAL: 'true'
       DISABLE_REGISTRATION: '${DISABLE_REGISTRATION:-true}'
       STORAGE_PROVIDER: 'local'
@@ -68,11 +72,23 @@ services:
       temporal:
         condition: service_started
     healthcheck:
+      # Sonde l'orchestrator (/health/status sur ORCHESTRATOR_PORT=3002), qui
+      # teste au passage la connexion a Temporal.
+      #
+      # start_period genereux, mesure en preprod : a chaque demarrage,
+      # l'orchestrator fait compiler par webpack UN bundle de 3 Mo PAR file de
+      # taches de reseau social (~34 : main, x, linkedin, mastodon, bluesky...),
+      # sequentiellement, et tout cela se produit AVANT que le port 3002 ne
+      # s'ouvre. Compter ~60-90 s a vide, et bien plus sous contention CPU
+      # (>290 s observe quand le backend joue ses migrations Prisma et que le
+      # frontend chauffe en meme temps sur 4 vCPU). Avec un start_period trop
+      # court, Docker marque le conteneur "unhealthy" alors qu'il demarre
+      # normalement.
       test: ["CMD", "node", "-e", "require('http').get({host:'127.0.0.1',port:3002,path:'/health/status'},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 10
-      start_period: 90s
+      start_period: 360s
     logging:
       driver: json-file
       options:

@@ -41,18 +41,31 @@ dans le bon type (voir la ligne "Elasticsearch" du tableau ci-dessous pour le
 pourquoi) :
 
 ```bash
+# 1. Temporal seul (Postiz ne doit PAS encore demarrer)
 docker compose up -d temporal-postgresql temporal
-docker compose logs -f temporal   # attendre que le namespace "default" soit pret
-docker compose --profile debug run --rm temporal-admin-tools \
-  temporal operator search-attribute create --address temporal:7233 --namespace default \
-  --name postId --type Keyword --name organizationId --type Keyword
+
+# 2. Attendre "Search attributes have been added" dans les logs (~20 s)
+docker compose logs temporal | grep "Search attributes have been added"
+
+# 3. Creer les deux attributs en type Keyword
+#    --entrypoint temporal est INDISPENSABLE : l'entrypoint de l'image
+#    admin-tools est "tini -- sleep infinity", qui avale silencieusement la
+#    commande passee et reste bloque indefiniment.
+#    -T aussi : le service declare tty: true, incompatible avec un pipe.
+DBG="docker compose --profile debug run --rm -T --entrypoint temporal temporal-admin-tools"
+$DBG operator search-attribute create --address temporal:7233 --namespace default --name postId --type Keyword
+$DBG operator search-attribute create --address temporal:7233 --namespace default --name organizationId --type Keyword
+
+# 4. Verifier : les deux doivent apparaitre en "Keyword"
+$DBG operator search-attribute list --address temporal:7233 --namespace default | grep -E "postId|organizationId"
 ```
 
-(Syntaxe à vérifier au premier déploiement — `temporal operator search-attribute
-create --help` dans le conteneur si la commande a changé entre-temps. Si cette étape
-est sautée, Postiz créera lui-même ces attributs mais dans un type moins adapté ; une
-fois créés, un attribut ne peut plus changer de type, donc autant bien faire dès le
-départ.)
+Si cette étape est sautée, Postiz créera lui-même ces attributs au premier
+démarrage mais en type `Text`, moins adapté à la recherche par égalité exacte dont
+il se sert pour annuler un post supprimé. Un attribut ne peut plus changer de type
+après création, d'où l'ordre imposé ici. À l'inverse, si les attributs existent
+déjà, Postiz les laisse tels quels (vérifié en préprod : ils sont restés `Keyword`
+après le démarrage complet).
 
 Puis démarrer le reste :
 
@@ -69,6 +82,44 @@ Vérifier que tout est vert :
 ```bash
 make ps        # postiz, postiz-postgres, postiz-redis doivent etre "healthy"
 ```
+
+### Démarrage de l'orchestrator — à lire une fois
+
+**Le passage au vert de `postiz` prend une à deux minutes, c'est normal.** À chaque
+démarrage, l'orchestrator fait compiler par webpack un bundle de 3 Mo par file de
+tâches de réseau social (~34), séquentiellement, **avant** d'ouvrir le port que
+sonde le healthcheck. Le `start_period` du healthcheck est réglé large en
+conséquence ; l'interface web, elle, répond bien avant ça.
+
+Pour suivre l'avancement : `docker compose exec postiz tail -f /root/.pm2/logs/orchestrator-error.log`
+(webpack y logue chaque bundle, avec le nom de la file de tâches). La ligne
+`Orchestrator health check listening on port 3002` dans `orchestrator-out.log`
+marque la fin.
+
+**⚠️ Ne jamais faire `docker compose up -d` (ni `make up`) pour appliquer un
+changement de `.env` sur une stack qui tourne — utiliser `make reload`.**
+Recréer le conteneur `postiz` pendant que Postgres/Redis/Temporal tournent déjà
+déclenche un blocage au démarrage de l'orchestrator : deadlock sur futex au
+chargement de ses modules natifs. Reproduit 2 fois sur 2 en préprod avec `up`
+seul, 0 fois sur 2 avec `down` puis `up`. C'est un bug de Postiz, pas de cette
+configuration ; `make reload` évite simplement la course en laissant `postiz`
+attendre les healthchecks de ses dépendances.
+
+**Comment reconnaître ce blocage** (utile car il est totalement silencieux) :
+
+| Signe | Valeur en cas de blocage |
+|---|---|
+| `make ps` | `postiz` reste `starting` puis passe `unhealthy`, indéfiniment |
+| `docker compose exec postiz ss -tln \| grep 3002` | rien (le port ne s'ouvre jamais) |
+| `docker compose exec postiz pm2 list` | `orchestrator` pourtant **`online`**, 0 redémarrage, 0 % CPU |
+| `orchestrator-out.log` | s'arrête après la bannière npm, **aucune ligne NestJS** |
+| `orchestrator-error.log` | aucun bundle webpack compilé |
+
+Un `pm2 restart orchestrator` **ne suffit pas toujours** à s'en sortir (testé :
+échec). La parade fiable est `make reload`. Conséquence importante : un
+orchestrator bloqué signifie qu'**aucun post programmé ne partira**, alors que
+l'interface web reste parfaitement fonctionnelle — d'où l'intérêt de surveiller
+l'état `healthy` du conteneur et pas seulement la disponibilité du site.
 
 Puis configurer la sauvegarde : `make init` (voir [`scripts/README.md`](./scripts/README.md)) —
 **la stack doit déjà tourner** (`make up`), les scripts de sauvegarde passent par
@@ -87,11 +138,49 @@ Puis configurer la sauvegarde : `make init` (voir [`scripts/README.md`](./script
 | `RUN_CRON` | `true` | Filet de rattrapage qui rescanne les posts en retard de moins de 48h — nécessaire puisque la base Temporal n'est pas sauvegardée (régénérable par ailleurs) |
 | Labels Traefik | `enable`/`docker.network`/`tls.certresolver`/`rule`/`loadbalancer.server.port` | Convention déjà en place sur les autres stacks de ce serveur, pas la syntaxe de la doc officielle Postiz |
 
-**Non appliqué, à envisager selon la charge du serveur** : aucune limite `mem_limit`/`cpus`
-n'est posée sur les services. Sur un hôte mutualisé, une fuite mémoire côté Postiz (ou
-Elasticsearch si tu le réactives) peut déclencher l'OOM-killer du noyau, qui tue le plus
-gros consommateur de RAM de la machine — pas forcément un conteneur de cette stack.
-À dimensionner selon le serveur cible si plusieurs services lourds cohabitent dessus.
+**Empreinte mémoire mesurée** (préprod, v2.22.1, stack au repos), avec et sans
+`EXCLUDE_QUEUE` (voir plus bas) :
+
+| Conteneur | Sans `EXCLUDE_QUEUE` | Avec (1 seul réseau) |
+|---|---|---|
+| `postiz` (backend + frontend + orchestrator sous pm2) | 2,41 Gio | **1,25 Gio** |
+| `temporal` | 189 Mio | 79 Mio |
+| `temporal-postgresql` | 76 Mio | 86 Mio |
+| `postiz-postgres` | 46 Mio | 31 Mio |
+| `postiz-redis` | 3 Mio | 3 Mio |
+| **total stack** | **~2,7 Gio** | **~1,45 Gio** |
+
+Détail par processus dans le conteneur `postiz`, sans `EXCLUDE_QUEUE` : orchestrator
+**1 585 Mo**, backend 535 Mo, frontend 228 Mo, plus ~500 Mo d'enveloppes `pnpm` qui ne
+font qu'attendre (l'image lance `pnpm start` au lieu de `node` directement). Avec
+`EXCLUDE_QUEUE`, l'orchestrator tombe à **497 Mo**.
+
+Compter donc **2 Go de RAM libre minimum** avec `EXCLUDE_QUEUE` bien réglé, **4 Go**
+sans, et davantage si tu utilises la génération d'images/vidéo. Le conteneur `postiz`
+étant le plus gros consommateur de la machine, c'est lui que l'OOM-killer du noyau
+désignera en cas de saturation — ou l'inverse, sa croissance peut faire tomber un autre
+service de l'hôte. **Aucune limite `mem_limit`/`cpus` n'est posée** : à ajouter si
+plusieurs services lourds cohabitent sur le serveur, pour cantonner le dégât à la stack.
+
+### `EXCLUDE_QUEUE` — le principal levier d'empreinte
+
+Non documenté en amont, trouvé dans le code (`temporal.module.ts`). Par défaut
+l'orchestrator démarre **un worker Temporal par réseau social supporté (~33)**, qu'il
+soit connecté ou non — chacun avec son bac à sable de workflow et son bundle webpack de
+3 Mo, compilés séquentiellement au démarrage. Exclure les files inutilisées divise
+l'empreinte par deux et le temps de démarrage aussi (90 s → 40 s, 33 bundles → 2).
+
+⚠️ **Panne silencieuse** : si un canal est connecté plus tard alors que sa file est
+exclue, l'interface acceptera de programmer des posts mais aucun worker ne les
+traitera — **ils ne partiront jamais, sans message d'erreur**. Mettre la liste à jour à
+chaque nouveau canal, et ne **jamais** exclure `main` (workflows généraux : rattrapage
+`RUN_CRON`, emails). Voir `env_example` pour la liste des files et un exemple.
+
+Vérifier ce qui tourne réellement après un démarrage :
+
+```bash
+docker compose exec postiz sh -c "grep -oE \"taskQueue: .[a-z]+\" /root/.pm2/logs/orchestrator-error.log | sort -u"
+```
 De même, pm2 écrit ses propres logs (`~/.pm2/logs/*` dans le conteneur `postiz`) qui ne
 sont PAS couverts par la limite `logging: max-size` (celle-ci ne plafonne que le flux
 stdout/stderr capté par Docker) — à surveiller si le disque du conteneur grossit de
@@ -176,6 +265,64 @@ documenté dans le design.
 
 **Compte admin créé mais jamais activé** — `EMAIL_PROVIDER` a été rempli avant que le
 SMTP soit vérifié fonctionnel. Voir la section email de `env_example`.
+
+**Les emails ne partent pas, sans aucune erreur** — vérifier d'abord dans les logs
+quel provider a réellement été sélectionné :
+
+```bash
+docker compose logs postiz | grep -E "Email service provider|Missing environment variable"
+```
+
+Doit afficher `Email service provider: nodemailer`. Si c'est `empty`, `EMAIL_PROVIDER`
+ne vaut pas exactement `nodemailer` ou `resend` — **toute autre valeur (y compris
+`mailgun`, `smtp`, `gmail`…) retombe silencieusement sur un provider qui n'envoie
+rien**. Mailgun/Brevo/OVH sont des *hôtes SMTP* : le provider reste `nodemailer`.
+Attention aussi au nom exact des variables : le code lit `EMAIL_PASS`, pas
+`EMAIL_PASSWORD`.
+
+**`535 Authentication failed` dans les logs** — les identifiants SMTP sont refusés :
+
+```bash
+docker compose logs postiz | grep -iE "EAUTH|535|Email to .* failed"
+```
+
+Avant de soupçonner le mot de passe, **vérifier la région Mailgun** : un domaine créé
+en région EU ne s'authentifie pas sur le point d'entrée US, et l'erreur est un `535`
+indistinguable d'un mauvais mot de passe. `smtp.mailgun.org` = US,
+`smtp.eu.mailgun.org` = EU. Pour trancher sans deviner, tester les quatre
+combinaisons depuis le conteneur (le mot de passe n'est jamais affiché) :
+
+```bash
+docker compose exec -T postiz node -e '
+const nm=require("/app/node_modules/nodemailer");
+(async()=>{for(const h of ["smtp.mailgun.org","smtp.eu.mailgun.org"])
+for(const c of [[465,true],[587,false]]){
+ try{await nm.createTransport({host:h,port:c[0],secure:c[1],
+  auth:{user:process.env.EMAIL_USER,pass:process.env.EMAIL_PASS},
+  connectionTimeout:1e4}).verify();console.log("OK    "+h+":"+c[0]);}
+ catch(e){console.log("ECHEC "+h+":"+c[0]+" -> "+(e.responseCode||e.code));}}})();'
+```
+
+Les envois passent par un workflow Temporal avec 3 tentatives : un échec laisse donc
+trois traces dans les logs, puis `Email to <adresse> failed after 3 attempts`.
+
+**Connecter un compte Mastodon** — le provider Mastodon exige trois variables
+d'environnement, contrairement à Bluesky ou Nostr dont les identifiants se saisissent
+dans l'interface. Il faut déclarer une application sur **ton** instance
+(*Préférences → Développement → Nouvelle application*) avec :
+
+| Champ | Valeur |
+|---|---|
+| URI de redirection | `https://<POSTIZ_DOMAIN>/integrations/social/mastodon` |
+| Permissions | `write:statuses`, `profile`, `write:media` |
+
+puis renseigner `MASTODON_URL` (l'URL de l'instance, ex. `https://piaille.fr`),
+`MASTODON_CLIENT_ID`, `MASTODON_CLIENT_SECRET` et faire `make reload`.
+`MASTODON_URL` étant une variable globale, **une instance Postiz ne peut se
+connecter qu'à une seule instance Mastodon**. Le provider « M. Instance »
+(`mastodon-custom`), qui déclarerait l'application tout seul et permettrait
+plusieurs instances, existe dans le code mais est **désactivé en v2.22.1**
+(`integration.manager.ts` : `// new MastodonCustomProvider()`).
 
 ## Ce qui n'a pas été activé (hors périmètre)
 

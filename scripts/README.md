@@ -5,7 +5,7 @@
 | [`init_backup.sh`](./init_backup.sh) | `make init` | Configure la sauvegarde : clé SSH dédiée, dépôt borgwarehouse, `.env`, cron |
 | [`backup_postiz.sh`](./backup_postiz.sh) | `make backup` | Dump PostgreSQL + tout le dossier de la stack → borgwarehouse |
 | [`check_backup.sh`](./check_backup.sh) | `make check` | Vérifie que la dernière sauvegarde est **restaurable** |
-| [`update_postiz.sh`](./update_postiz.sh) | `make update` | Sauvegarde → `pull` → `up -d` → attente du healthcheck |
+| [`update_postiz.sh`](./update_postiz.sh) | `make update` | Sauvegarde → `pull` → `down` → `up -d` → attente du healthcheck |
 
 **Aucun script ne contient de secret.** Tous lisent le `.env` de la stack, que git
 ignore. Modèle repris de [`ghost/scripts`](https://github.com/CoopCodeCommun/ghost)

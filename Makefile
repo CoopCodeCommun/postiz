@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs ps init backup check update
+.PHONY: help up down reload restart logs ps init backup check update
 
 DC := docker compose
 
@@ -6,8 +6,9 @@ help:
 	@echo "Stack Postiz — cibles disponibles :"
 	@echo ""
 	@echo "  make up        demarre la stack"
-	@echo "  make down      arrete la stack (les donnees restent dans ./data)"
-	@echo "  make restart   redemarre la stack"
+	@echo "  make down      arrete la stack (les donnees restent dans ./data et les volumes)"
+	@echo "  make reload    down + up : A UTILISER apres toute modification du .env"
+	@echo "  make restart   redemarre les conteneurs SANS relire le .env (rarement ce qu'on veut)"
 	@echo "  make logs      suit les logs de postiz"
 	@echo "  make ps        etat des conteneurs (healthy ?)"
 	@echo ""
@@ -22,6 +23,14 @@ up:
 
 down:
 	$(DC) --profile debug down
+
+# Toujours passer par down+up et non par un simple `up -d` apres avoir touche au
+# .env : recreer le conteneur postiz pendant que Postgres/Redis/Temporal tournent
+# deja declenche un blocage au demarrage de l'orchestrator (voir README,
+# "Demarrage de l'orchestrator"). down sans -v ne perd aucune donnee.
+reload:
+	$(DC) --profile debug down
+	$(DC) up -d
 
 restart:
 	$(DC) restart
