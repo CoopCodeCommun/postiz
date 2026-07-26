@@ -38,6 +38,12 @@ services:
       LINKEDIN_CLIENT_SECRET: '${LINKEDIN_CLIENT_SECRET:-}'
       FACEBOOK_APP_ID: '${FACEBOOK_APP_ID:-}'
       FACEBOOK_APP_SECRET: '${FACEBOOK_APP_SECRET:-}'
+      # Instagram a DEUX providers distincts : "Instagram (Facebook Business)",
+      # qui utilise les identifiants FACEBOOK_APP_* ci-dessus, et "Instagram
+      # (Standalone)", qui exige ces deux variables-ci. Les deux publient sur la
+      # meme file de taches Temporal ("instagram").
+      INSTAGRAM_APP_ID: '${INSTAGRAM_APP_ID:-}'
+      INSTAGRAM_APP_SECRET: '${INSTAGRAM_APP_SECRET:-}'
       THREADS_APP_ID: '${THREADS_APP_ID:-}'
       THREADS_APP_SECRET: '${THREADS_APP_SECRET:-}'
       YOUTUBE_CLIENT_ID: '${YOUTUBE_CLIENT_ID:-}'

@@ -92,6 +92,11 @@ LINKEDIN_CLIENT_ID=
 LINKEDIN_CLIENT_SECRET=
 FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
+# Instagram a DEUX providers : "Instagram (Facebook Business)" utilise les
+# FACEBOOK_APP_* ci-dessus ; "Instagram (Standalone)" exige les deux variables
+# ci-dessous. Les deux passent par la meme file Temporal ("instagram").
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=
 THREADS_APP_ID=
 THREADS_APP_SECRET=
 YOUTUBE_CLIENT_ID=
@@ -141,8 +146,14 @@ MASTODON_CLIENT_SECRET=
 #   slack telegram threads tiktok tumblr twitch vk whop wordpress wrapcast x
 #   youtube
 #
-# Exemple ci-dessous : tout est exclu SAUF mastodon (et main). Adapter.
-EXCLUDE_QUEUE=bluesky,devto,discord,dribbble,facebook,gmb,hashnode,instagram,kick,lemmy,linkedin,listmonk,medium,mewe,moltbook,nostr,pinterest,reddit,skool,slack,telegram,threads,tiktok,tumblr,twitch,vk,whop,wordpress,wrapcast,x,youtube
+# UNE FILE PAR FAMILLE : la file d'un post est calculee par
+# providerIdentifier.split('-')[0] (posts.service.ts). Donc "linkedin-page" part
+# dans la file "linkedin", et "instagram-standalone" dans "instagram". Conserver
+# "linkedin" couvre donc aussi les Pages LinkedIn, et "instagram" couvre les deux
+# variantes Instagram -- pas besoin de lister les identifiants a tiret.
+#
+# Exemple ci-dessous : tout est exclu SAUF mastodon, instagram, linkedin (+ main).
+EXCLUDE_QUEUE=bluesky,devto,discord,dribbble,facebook,gmb,hashnode,kick,lemmy,listmonk,medium,mewe,moltbook,nostr,pinterest,reddit,skool,slack,telegram,threads,tiktok,tumblr,twitch,vk,whop,wordpress,wrapcast,x,youtube
 
 # --- Temporal UI (profile "debug" uniquement, jamais expose via Traefik) ---
 # Port loopback local. 8080 est deliberement EVITE : deja utilise par
