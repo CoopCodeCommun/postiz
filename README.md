@@ -1,0 +1,2 @@
+# postiz
+Self hosted postiz
