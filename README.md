@@ -407,9 +407,53 @@ connecter qu'à une seule instance Mastodon**. Le provider « M. Instance »
 plusieurs instances, existe dans le code mais est **désactivé en v2.22.1**
 (`integration.manager.ts` : `// new MastodonCustomProvider()`).
 
+## Plusieurs instances sur le même serveur
+
+C'est prévu et éprouvé : rien n'est nommé en dur. Chaque instance est un clone du dépôt
+dans son propre dossier, avec son `.env`. Tout se dérive de `COMPOSE_PROJECT_NAME` —
+conteneurs, réseaux, volumes **et** routers Traefik.
+
+Quatre variables doivent différer d'une instance à l'autre :
+
+| Variable | Pourquoi |
+|---|---|
+| `COMPOSE_PROJECT_NAME` | Unique sur l'hôte : nomme conteneurs, réseaux, volumes et routers Traefik |
+| `POSTIZ_DOMAIN` | Domaine distinct (+ enregistrement DNS A) |
+| `JWT_SECRET`, `POSTGRES_PASSWORD` | Secrets propres à chaque instance, jamais recopiés |
+| `TEMPORAL_UI_PORT` | Seul port publié (profil `debug`) : deux instances collisionneraient |
+
+Chaque instance a aussi son propre dépôt borgwarehouse et sa clé SSH — `make init`, lancé
+dans le dossier de l'instance, s'en occupe et pose sa propre ligne de cron (le cron matche
+le chemin **absolu** du script, donc les lignes ne s'écrasent pas).
+
+Côté ressources, compter ~1,45 Gio par instance avec `EXCLUDE_QUEUE` bien réglé (voir la
+section empreinte mémoire).
+
+### ⚠️ Piège : les variables exportées écrasent le `.env`
+
+**Docker Compose donne la priorité aux variables d'environnement du shell sur le fichier
+`.env`.** Si tu as fait un `set -a ; . .env ; set +a` dans ton shell pour déboguer une
+instance — un réflexe courant pour utiliser `borg` à la main — puis que tu passes dans le
+dossier d'une **autre** instance, `docker compose` utilisera silencieusement le domaine, le
+nom de projet et les secrets de la première. Rencontré en préprod : le compose de la
+seconde instance se résolvait avec le domaine de la première.
+
+Vérifier systématiquement avant de démarrer une instance :
+
+```bash
+docker compose config | grep -E "^name:|routers.*rule"
+```
+
+Et pour nettoyer un shell pollué :
+
+```bash
+unset $(env | grep -oE "^(POSTIZ_|COMPOSE_|BORG_|EMAIL_|EXCLUDE_|MASTODON_|JWT_|POSTGRES_|TEMPORAL_)[A-Z_]*" | tr "\n" " ")
+```
+
+C'est aussi une raison de plus de ne jamais sourcer le `.env` entier : les scripts de
+sauvegarde de ce dépôt n'extraient que les clés dont ils ont besoin (`valeur_env()`).
+
 ## Ce qui n'a pas été activé (hors périmètre)
 
 - **Cloudflare R2** : stockage local (bind mount) suffit pour l'instant.
 - **OAuth générique / Keycloak** : reporté, voir plus haut.
-- **Multi-instance sur le même serveur** : une seule instance Postiz est prévue ici
-  (pas de `COMPOSE_PROJECT_NAME` dérivé pour cohabiter avec une deuxième instance).
