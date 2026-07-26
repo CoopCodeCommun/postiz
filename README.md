@@ -186,6 +186,28 @@ sont PAS couverts par la limite `logging: max-size` (celle-ci ne plafonne que le
 stdout/stderr capté par Docker) — à surveiller si le disque du conteneur grossit de
 façon inattendue.
 
+### Le chat IA et la génération d'images ne sont pas désactivables
+
+Il n'existe **aucun réglage** pour les couper : pas de `DISABLE_AI` ni équivalent (les
+seules occurrences de `DISABLE_*` concernent `DISABLE_IMAGE_COMPRESSION`, qui porte sur
+la compression des fichiers **envoyés**, pas sur la génération). Le code est chargé dans
+tous les cas — ne pas définir `OPENAI_API_KEY` rend seulement les fonctions inertes
+(`openai.service.ts` retombe sur une clé factice `sk-proj-`), sans **aucun** gain de
+mémoire.
+
+**Surtout : ne pas chercher à retirer ces dépendances pour alléger la stack — le serveur
+MCP en dépend.** `libraries/nestjs-libraries/src/chat/start.mcp.ts` importe
+`MastraService` depuis `chat/mastra.service` et `MCPServer` depuis `@mastra/mcp` : le
+serveur MCP **est** l'agent Mastra exposé en MCP, c'est le même code. Supprimer la brique
+de chat casserait le MCP.
+
+À l'inverse, le MCP fonctionne parfaitement **sans** clé OpenAI (vérifié en préprod) :
+un serveur MCP expose des outils, il n'appelle aucun LLM lui-même — c'est le client
+(Claude Code, Claude Desktop…) qui s'en charge. La configuration par défaut de ce dépôt
+est donc déjà l'état souhaitable : fonctions IA inertes, MCP opérationnel.
+
+Le vrai levier d'empreinte est `EXCLUDE_QUEUE` (voir plus haut), pas l'IA.
+
 ## OAuth générique (Keycloak) — reporté
 
 `POSTIZ_GENERIC_OAUTH` permettrait de déléguer la connexion à un Keycloak existant,
