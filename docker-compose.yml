@@ -1,0 +1,214 @@
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION:-v2.22.1}
+    restart: unless-stopped
+    environment:
+      MAIN_URL: 'https://${POSTIZ_DOMAIN:?POSTIZ_DOMAIN manquant dans .env}'
+      FRONTEND_URL: 'https://${POSTIZ_DOMAIN:?POSTIZ_DOMAIN manquant dans .env}'
+      NEXT_PUBLIC_BACKEND_URL: 'https://${POSTIZ_DOMAIN:?POSTIZ_DOMAIN manquant dans .env}/api'
+      BACKEND_INTERNAL_URL: 'http://localhost:3000'
+      JWT_SECRET: '${JWT_SECRET:?JWT_SECRET manquant dans .env}'
+      DATABASE_URL: 'postgresql://${POSTGRES_USER:?POSTGRES_USER manquant}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant}@postiz-postgres:5432/${POSTGRES_DB:?POSTGRES_DB manquant}'
+      REDIS_URL: 'redis://postiz-redis:6379'
+      TEMPORAL_ADDRESS: 'temporal:7233'
+      TEMPORAL_NAMESPACE: 'default'
+      RUN_CRON: 'true'
+      IS_GENERAL: 'true'
+      DISABLE_REGISTRATION: '${DISABLE_REGISTRATION:-true}'
+      STORAGE_PROVIDER: 'local'
+      UPLOAD_DIRECTORY: '/uploads'
+      NEXT_PUBLIC_UPLOAD_STATIC_DIRECTORY: '/uploads'
+      EMAIL_PROVIDER: '${EMAIL_PROVIDER:-}'
+      EMAIL_HOST: '${EMAIL_HOST:-}'
+      EMAIL_PORT: '${EMAIL_PORT:-587}'
+      EMAIL_SECURE: '${EMAIL_SECURE:-false}'
+      EMAIL_USER: '${EMAIL_USER:-}'
+      EMAIL_PASS: '${EMAIL_PASS:-}'
+      EMAIL_FROM_ADDRESS: '${EMAIL_FROM_ADDRESS:-}'
+      EMAIL_FROM_NAME: '${EMAIL_FROM_NAME:-}'
+      API_LIMIT: '${API_LIMIT:-90}'
+      X_URL: '${X_URL:-}'
+      X_API_KEY: '${X_API_KEY:-}'
+      X_API_SECRET: '${X_API_SECRET:-}'
+      LINKEDIN_CLIENT_ID: '${LINKEDIN_CLIENT_ID:-}'
+      LINKEDIN_CLIENT_SECRET: '${LINKEDIN_CLIENT_SECRET:-}'
+      FACEBOOK_APP_ID: '${FACEBOOK_APP_ID:-}'
+      FACEBOOK_APP_SECRET: '${FACEBOOK_APP_SECRET:-}'
+      THREADS_APP_ID: '${THREADS_APP_ID:-}'
+      THREADS_APP_SECRET: '${THREADS_APP_SECRET:-}'
+      YOUTUBE_CLIENT_ID: '${YOUTUBE_CLIENT_ID:-}'
+      YOUTUBE_CLIENT_SECRET: '${YOUTUBE_CLIENT_SECRET:-}'
+      TIKTOK_CLIENT_ID: '${TIKTOK_CLIENT_ID:-}'
+      TIKTOK_CLIENT_SECRET: '${TIKTOK_CLIENT_SECRET:-}'
+      REDDIT_CLIENT_ID: '${REDDIT_CLIENT_ID:-}'
+      REDDIT_CLIENT_SECRET: '${REDDIT_CLIENT_SECRET:-}'
+      PINTEREST_CLIENT_ID: '${PINTEREST_CLIENT_ID:-}'
+      PINTEREST_CLIENT_SECRET: '${PINTEREST_CLIENT_SECRET:-}'
+      DISCORD_CLIENT_ID: '${DISCORD_CLIENT_ID:-}'
+      DISCORD_CLIENT_SECRET: '${DISCORD_CLIENT_SECRET:-}'
+      DISCORD_BOT_TOKEN_ID: '${DISCORD_BOT_TOKEN_ID:-}'
+      SLACK_ID: '${SLACK_ID:-}'
+      SLACK_SECRET: '${SLACK_SECRET:-}'
+      SLACK_SIGNING_SECRET: '${SLACK_SIGNING_SECRET:-}'
+      MASTODON_URL: '${MASTODON_URL:-https://mastodon.social}'
+      MASTODON_CLIENT_ID: '${MASTODON_CLIENT_ID:-}'
+      MASTODON_CLIENT_SECRET: '${MASTODON_CLIENT_SECRET:-}'
+    volumes:
+      - ./data/config:/config/
+      - ./data/uploads:/uploads/
+    networks:
+      - frontend
+      - postiz-network
+      - temporal-network
+    depends_on:
+      postiz-postgres:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get({host:'127.0.0.1',port:3002,path:'/health/status'},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      # Noms de routers/services Traefik derives de COMPOSE_PROJECT_NAME : ces
+      # noms sont globaux a l'instance Traefik (pas namespaces par projet
+      # compose), meme raisonnement que l'absence de container_name.
+      - "traefik.enable=true"
+      - "traefik.docker.network=frontend"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME:-postiz}.tls.certresolver=myresolver"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME:-postiz}.rule=Host(`${POSTIZ_DOMAIN:?POSTIZ_DOMAIN manquant dans .env}`)"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME:-postiz}.loadbalancer.server.port=5000"
+
+  postiz-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: '${POSTGRES_USER:?POSTGRES_USER manquant dans .env}'
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}'
+      POSTGRES_DB: '${POSTGRES_DB:?POSTGRES_DB manquant dans .env}'
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - postiz-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postiz-redis:
+    image: redis:7.2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - postiz-redis-data:/data
+    networks:
+      - postiz-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  temporal-postgresql:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    networks:
+      - temporal-network
+    expose:
+      - 5432
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    restart: unless-stopped
+    depends_on:
+      - temporal-postgresql
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgresql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=false
+      - TEMPORAL_NAMESPACE=default
+    networks:
+      - temporal-network
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools:1.28.1-tctl-1.18.4-cli-1.4.1
+    profiles: ["debug"]
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    networks:
+      - temporal-network
+    stdin_open: true
+    tty: true
+    depends_on:
+      - temporal
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    profiles: ["debug"]
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://127.0.0.1:${TEMPORAL_UI_PORT:-8233}
+    networks:
+      - temporal-network
+      - debug-access
+    ports:
+      - "127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8080"
+
+volumes:
+  postiz-redis-data:
+  temporal-postgres-data:
+
+networks:
+  frontend:
+    external: true
+  postiz-network:
+    internal: true
+  temporal-network:
+    internal: true
+  # Reseau NON internal dedie a temporal-ui : un conteneur uniquement rattache
+  # a des reseaux internal:true ne voit pas son port publie sur l'hote sur les
+  # moteurs Docker recents (le binding a besoin d'une route de sortie). Ce
+  # reseau ne sert qu'a ca ; temporal-network reste internal pour le reste.
+  debug-access: {}

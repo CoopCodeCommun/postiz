@@ -1,0 +1,124 @@
+# Copier ce fichier en .env a cote du docker-compose.yml, puis remplir.
+#   cp env_example .env && chmod 600 .env
+
+# Nom du projet compose : nomme les conteneurs et les reseaux (pas de
+# container_name en dur dans le compose, voir design). Garder "postiz" sauf
+# si une deuxieme instance doit cohabiter sur le meme hote.
+COMPOSE_PROJECT_NAME=postiz
+
+# Domaine public (sans https://), doit pointer sur ce serveur (DNS A record)
+# et etre routable par Traefik (reseau externe "frontend" deja en place).
+POSTIZ_DOMAIN=postiz.example.com
+
+# Version epinglee de l'image officielle. "docker compose pull" ne ramenera
+# RIEN tant que cette valeur n'est pas changee a la main (voir "make update").
+# Releases : https://github.com/gitroomhq/postiz-app/releases
+#
+# ATTENTION : le fichier version.txt du depot Postiz N'EST PAS fiable comme
+# indicateur de version (verifie : au tag v1.47.0 lui-meme, version.txt
+# contenait deja "v1.46.0" ; au tag v2.22.1, il contient "v1.47.0"). Se fier
+# UNIQUEMENT au tag git reel. La stack Temporal (orchestrator, RUN_CRON,
+# endpoint /health/status) n'existe qu'a partir des versions 2.x -
+# v1.47.0 ne l'a PAS (verifie : apps/ contient encore "cron"/"workers" a ce
+# tag, pas "orchestrator", et RUN_CRON n'existe dans aucun fichier). Ne
+# jamais epingler une version anterieure a v2.x avec ce docker-compose.yml.
+POSTIZ_VERSION=v2.22.1
+
+# Secret de signature des sessions JWT. Generer avec : openssl rand -hex 32
+JWT_SECRET=CHANGEME_openssl_rand_-hex_32
+
+# Base de donnees Postiz. Mot de passe a generer avec : openssl rand -hex 32
+# ATTENTION : ne plus changer ces valeurs une fois la base initialisee.
+POSTGRES_USER=postiz
+POSTGRES_PASSWORD=CHANGEME_openssl_rand_-hex_32
+POSTGRES_DB=postiz
+
+# true = un seul compte peut s'inscrire, puis la page d'inscription se
+# verrouille. Ne protege PAS contre l'OAuth generique (voir plus bas).
+# Doit etre exactement "true" en minuscules : "True"/"TRUE"/"1" laissent
+# l'inscription OUVERTE sans avertissement.
+DISABLE_REGISTRATION=true
+
+# Limite horaire de l'API publique de creation de posts. 90 est le defaut du
+# code Postiz lui-meme si la variable est absente ; le compose officiel de
+# Postiz la redescend a 30 pour son propre usage, sans que ce soit documente
+# comme "la" valeur de reference. 90 est garde ici, coherent avec le code.
+API_LIMIT=90
+
+# --- Email (Mailgun via SMTP/nodemailer) ---
+# IMPORTANT : des que EMAIL_PROVIDER est renseigne, l'activation par email
+# devient OBLIGATOIRE pour les comptes locaux. Creer le compte admin AVANT de
+# remplir cette section, ou verifier que les identifiants SMTP fonctionnent
+# avant (sinon : compte cree mais jamais active, verrouille dehors).
+EMAIL_PROVIDER=
+EMAIL_HOST=smtp.mailgun.org
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=
+EMAIL_PASS=
+EMAIL_FROM_ADDRESS=
+# Si la valeur contient un espace (ex: Postiz Team), l'entourer de guillemets
+# doubles : EMAIL_FROM_NAME="Postiz Team". Les scripts de sauvegarde n'ouvrent
+# QUE les cles BORG_* de ce fichier (jamais tout le .env), donc un espace ici
+# ne peut plus casser une sauvegarde -- mais Docker Compose, lui, le lira mal
+# si la valeur n'est pas quotee.
+EMAIL_FROM_NAME=
+
+# --- Reseaux sociaux : ne remplir que ceux reellement utilises ---
+X_URL=
+X_API_KEY=
+X_API_SECRET=
+LINKEDIN_CLIENT_ID=
+LINKEDIN_CLIENT_SECRET=
+FACEBOOK_APP_ID=
+FACEBOOK_APP_SECRET=
+THREADS_APP_ID=
+THREADS_APP_SECRET=
+YOUTUBE_CLIENT_ID=
+YOUTUBE_CLIENT_SECRET=
+TIKTOK_CLIENT_ID=
+TIKTOK_CLIENT_SECRET=
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+PINTEREST_CLIENT_ID=
+PINTEREST_CLIENT_SECRET=
+DISCORD_CLIENT_ID=
+DISCORD_CLIENT_SECRET=
+DISCORD_BOT_TOKEN_ID=
+SLACK_ID=
+SLACK_SECRET=
+SLACK_SIGNING_SECRET=
+MASTODON_URL=https://mastodon.social
+MASTODON_CLIENT_ID=
+MASTODON_CLIENT_SECRET=
+
+# --- Temporal UI (profile "debug" uniquement, jamais expose via Traefik) ---
+# Port loopback local. 8080 est deliberement EVITE : deja utilise par
+# plusieurs autres stacks de ce parc. Acces :
+#   docker compose --profile debug up -d temporal-ui
+#   ssh -L 8233:127.0.0.1:8233 user@serveur
+TEMPORAL_UI_PORT=8233
+
+# --- OAuth generique (Keycloak) --- REPORTE, voir
+# docs/superpowers/specs/2026-07-26-postiz-selfhost-design.md : le provider
+# GENERIC contourne DISABLE_REGISTRATION. Ne decommenter qu'apres avoir cree
+# un client Keycloak dedie a acces restreint.
+#
+# IMPORTANT : decommenter ICI ne suffit pas. Ces variables doivent EN PLUS
+# etre ajoutees au bloc "environment:" du service postiz dans
+# docker-compose.yml (elles n'y sont pas cablees tant que la fonctionnalite
+# est reportee, deliberement -- pour ne pas pouvoir l'activer par accident).
+#POSTIZ_GENERIC_OAUTH=true
+#POSTIZ_OAUTH_URL=
+#POSTIZ_OAUTH_AUTH_URL=
+#POSTIZ_OAUTH_TOKEN_URL=
+#POSTIZ_OAUTH_USERINFO_URL=
+#POSTIZ_OAUTH_CLIENT_ID=
+#POSTIZ_OAUTH_CLIENT_SECRET=
+
+# --- Sauvegarde borg : NE RIEN REMPLIR ICI. Ecrit automatiquement par
+# `make init` (cle SSH, depot BWH, passphrase). Laisser commente. ---
+#BORG_PREFIX=
+#BORG_REPO=
+#BORG_PASSPHRASE=
+#AGE_MAX_HEURES=

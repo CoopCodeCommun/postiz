@@ -1,1 +1,8 @@
 github
+docs/
+.env*
+/data/
+/scripts/.ssh/
+/scripts/pg-dump-*/
+/scripts/.backup-*.lock
+.claude/
