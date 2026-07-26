@@ -53,6 +53,10 @@ BORG_REPO="${BORG_REPO:-$(valeur_env BORG_REPO)}"
 BORG_PASSPHRASE="${BORG_PASSPHRASE:-$(valeur_env BORG_PASSPHRASE)}"
 AGE_MAX_HEURES="${AGE_MAX_HEURES:-$(valeur_env AGE_MAX_HEURES)}"
 AGE_MAX_HEURES="${AGE_MAX_HEURES:-25}"
+# L'export est INDISPENSABLE : borg lit BORG_PASSPHRASE dans son ENVIRONNEMENT,
+# pas dans le shell. Sans lui, borg reclame la passphrase au clavier -- donc
+# `make check` bloque en interactif et echoue depuis un monitoring.
+export BORG_REPO BORG_PASSPHRASE
 
 : "${BORG_PREFIX:?BORG_PREFIX absent du .env — la sauvegarde n'est pas configuree (make init)}"
 : "${BORG_REPO:?BORG_REPO absent du .env — la sauvegarde n'est pas configuree (make init)}"
@@ -101,25 +105,25 @@ else
   ko "aucun dump Postgres dans l'archive."
 fi
 
-if printf '%s\n' "$CONTENU" | grep -qE '/data/uploads(/|$)'; then
+if grep -qE '/data/uploads(/|$)' <<< "$CONTENU"; then
   ok "uploads presents (./data/uploads)"
 else
   ko "./data/uploads absent de l'archive."
 fi
 
-if printf '%s\n' "$CONTENU" | grep -qE '/data/config(/|$)'; then
+if grep -qE '/data/config(/|$)' <<< "$CONTENU"; then
   ok "config presente (./data/config)"
 else
   ko "./data/config absent de l'archive."
 fi
 
-if printf '%s\n' "$CONTENU" | grep -qE '/docker-compose\.yml$'; then
+if grep -qE '/docker-compose\.yml$' <<< "$CONTENU"; then
   ok "docker-compose.yml present"
 else
   ko "docker-compose.yml absent de l'archive."
 fi
 
-if printf '%s\n' "$CONTENU" | grep -qE '/\.env$'; then
+if grep -qE '/\.env$' <<< "$CONTENU"; then
   ok ".env present (la stack est remontable telle quelle)"
 else
   ko ".env absent : une restauration demanderait de resaisir les secrets."
@@ -143,8 +147,8 @@ else
   TOC="$(borg extract --stdout "$BORG_REPO::$ARCHIVE" "$CHEMIN_DUMP" \
       | docker compose -f "$COMPOSE_FILE" exec -T postiz-postgres pg_restore -l || true)"
 
-  if printf '%s\n' "$TOC" | grep -qE 'TABLE public Post[[:space:]]' \
-     && printf '%s\n' "$TOC" | grep -qE 'TABLE public User[[:space:]]'; then
+  if grep -qE 'TABLE public Post[[:space:]]' <<< "$TOC" \
+     && grep -qE 'TABLE public User[[:space:]]' <<< "$TOC"; then
     ok "schema Postiz retrouve (tables Post et User)"
   else
     ko "le dump ne contient pas le schema Postiz attendu (base vide ou dump invalide)."

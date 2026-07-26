@@ -67,6 +67,13 @@ valeur_env() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ENV_FILE
 BORG_PREFIX="${BORG_PREFIX:-$(valeur_env BORG_PREFIX)}"
 BORG_REPO="${BORG_REPO:-$(valeur_env BORG_REPO)}"
 BORG_PASSPHRASE="${BORG_PASSPHRASE:-$(valeur_env BORG_PASSPHRASE)}"
+# L'export est INDISPENSABLE : borg lit BORG_PASSPHRASE dans son ENVIRONNEMENT,
+# pas dans le shell. Sans lui, borg reclame la passphrase au clavier -- ce qui
+# passe inapercu en interactif mais fait echouer le cron, chaque nuit, en
+# silence. (L'ancien `set -a; . .env; set +a` exportait tout automatiquement ;
+# valeur_env(), qui le remplace pour ne plus executer le .env comme du bash,
+# n'exporte rien de lui-meme.)
+export BORG_REPO BORG_PASSPHRASE
 
 PREFIX="${BORG_PREFIX:?BORG_PREFIX doit etre renseigne dans le .env}"
 SSH_KEY="${SSH_KEY:-$SCRIPT_DIR/.ssh/${PREFIX}_ed25519}"

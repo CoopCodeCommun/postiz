@@ -5,4 +5,9 @@ docs/
 /scripts/.ssh/
 /scripts/pg-dump-*/
 /scripts/.backup-*.lock
-.claude/
+# .claude/ reste ignore (settings.local.json, caches), SAUF les skills, qui sont
+# de la documentation d'usage du depot et doivent suivre le versionnement.
+# Le motif doit etre ".claude/*" et non ".claude/" : git ne sait pas reinclure
+# un fichier dont le repertoire parent est lui-meme exclu.
+.claude/*
+!.claude/skills/

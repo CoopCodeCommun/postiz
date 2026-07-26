@@ -1,0 +1,30 @@
+# Identifiants du CLI Postiz (./scripts/postiz), a ne pas confondre avec le
+# .env de la stack docker-compose : ce fichier-ci ne configure PAS le serveur,
+# seulement le client en ligne de commande.
+#
+#   cp env_postiz_cli_example .env.postiz-cli && chmod 600 .env.postiz-cli
+#
+# .env.postiz-cli est deja couvert par le .gitignore (motif ".env*").
+
+# Cle de l'API publique, a recuperer dans l'interface : Settings > Public API.
+# Elle donne un acces complet a l'organisation (publier, supprimer, analytics) :
+# la traiter comme un mot de passe.
+POSTIZ_API_KEY=CHANGEME
+
+# URL du backend, SANS slash final et AVEC le suffixe /api.
+#
+# Le /api n'est pas optionnel et c'est l'erreur la plus facile a commettre : le
+# CLI concatene lui-meme le chemin ("${POSTIZ_API_URL}/public/v1/posts", voir
+# src/api.ts du depot gitroomhq/postiz-agent), et notre backend est monte sous
+# /api (NEXT_PUBLIC_BACKEND_URL dans docker-compose.yml). Sans le suffixe, les
+# requetes tombent sur le frontend Next.js et renvoient du HTML au lieu du JSON
+# attendu, avec une erreur de parsing peu parlante.
+#
+# Doit correspondre a POSTIZ_DOMAIN du .env de la stack.
+POSTIZ_API_URL=https://postiz.example.com/api
+
+# Version du paquet npm "postiz" utilisee par le wrapper, epinglee pour la meme
+# raison que POSTIZ_VERSION cote image Docker : eviter un saut de version non
+# annonce. Laisser commente pour garder la valeur par defaut du script.
+# Releases : https://www.npmjs.com/package/postiz
+#POSTIZ_CLI_VERSION=2.0.15

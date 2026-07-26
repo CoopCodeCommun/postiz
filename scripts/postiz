@@ -1,0 +1,82 @@
+#!/bin/bash
+set -euo pipefail
+
+##### INSTRUCTION
+#
+# Wrapper du CLI Postiz (https://github.com/gitroomhq/postiz-agent).
+#
+# Pourquoi ce wrapper plutot que "npm install -g postiz" comme le dit la doc
+# officielle :
+#
+#   1. AUCUNE installation globale. Le CLI est telecharge a la demande par npx
+#      dans le cache npm (~/.npm/_npx) et rien n'est ajoute au PATH systeme.
+#      Ce depot n'a pas de package.json : un "npm install" local y creerait
+#      package.json + package-lock.json + node_modules/, sans rapport avec une
+#      stack docker-compose.
+#
+#   2. VERSION EPINGLEE, meme logique que POSTIZ_VERSION pour l'image Docker.
+#      "npx postiz" sans version prendrait la derniere publiee sans preavis.
+#
+#   3. CHARGEMENT AUTOMATIQUE des identifiants depuis .env.postiz-cli, pour ne
+#      pas avoir a exporter POSTIZ_API_KEY/POSTIZ_API_URL a chaque session.
+#
+# PIEGE MAJEUR, la raison d'etre du garde-fou plus bas : "postiz auth:login"
+# NE CONVIENT PAS a une instance auto-hebergee. Cette commande s'authentifie
+# contre le cloud Postiz (cli-auth.postiz.com, api.postiz.com) et ecrit dans
+# ~/.postiz/credentials.json. Or getConfig() du CLI lit ce fichier EN PRIORITE
+# sur les variables d'environnement : si le fichier existe, POSTIZ_API_URL est
+# ignore en silence et toutes les commandes partent vers le cloud au lieu de
+# notre instance. Verifie dans src/config.ts et src/commands/auth.ts du depot
+# gitroomhq/postiz-agent.
+#
+# Usage :
+#   ./scripts/postiz integrations:list
+#   ./scripts/postiz posts:list
+#   ./scripts/postiz analytics:platform <integration-id> -d 30
+#
+# Surcharges possibles :
+#   POSTIZ_CLI_VERSION=2.0.16 ./scripts/postiz ...   # tester une autre version
+#   POSTIZ_CLI_ENV=/autre/.env ./scripts/postiz ...  # autre fichier d'identifiants
+#
+#####
+
+POSTIZ_CLI_VERSION="${POSTIZ_CLI_VERSION:-2.0.15}"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${POSTIZ_CLI_ENV:-$ROOT/.env.postiz-cli}"
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+if [[ -z "${POSTIZ_API_KEY:-}" ]]; then
+  cat >&2 <<EOF
+Erreur : POSTIZ_API_KEY absent.
+
+Creer le fichier d'identifiants a partir du modele, puis le remplir :
+
+  cp env_postiz_cli_example .env.postiz-cli && chmod 600 .env.postiz-cli
+
+La cle se recupere dans l'interface Postiz : Settings > Public API.
+EOF
+  exit 1
+fi
+
+# Garde-fou : voir "PIEGE MAJEUR" ci-dessus.
+if [[ -f "$HOME/.postiz/credentials.json" ]]; then
+  cat >&2 <<EOF
+Avertissement : ~/.postiz/credentials.json existe.
+
+Ce fichier est prioritaire sur POSTIZ_API_KEY/POSTIZ_API_URL dans le CLI : les
+commandes vont probablement viser le cloud Postiz et non notre instance. Il
+provient d'un "postiz auth:login". Le supprimer si ce n'est pas voulu :
+
+  rm ~/.postiz/credentials.json
+
+EOF
+fi
+
+exec npx --yes "postiz@${POSTIZ_CLI_VERSION}" "$@"

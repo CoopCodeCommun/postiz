@@ -232,6 +232,67 @@ redescente re-migrerait de façon destructive. La procédure sûre est de restau
 base depuis la sauvegarde prise juste avant (voir `scripts/README.md`), pas de
 rejouer un ancien tag sur la base telle quelle.
 
+## CLI Postiz et skill Claude Code
+
+Le [CLI officiel](https://github.com/gitroomhq/postiz-agent) (paquet npm `postiz`)
+pilote l'instance par l'API publique `/public/v1`. Il couvre plus de choses que le
+serveur MCP intégré : lister et supprimer des posts existants, changer leur statut,
+lire les analytics, téléverser un fichier local — toutes opérations absentes du MCP.
+En revanche il ne fait **aucune génération d'image ou de vidéo** ; ces fonctions-là
+dépendent de `OPENAI_API_KEY`, non renseignée sur cette instance, et échouent en 500
+aussi bien via le MCP que via l'interface web.
+
+### Mise en route
+
+```bash
+cp env_postiz_cli_example .env.postiz-cli && chmod 600 .env.postiz-cli
+nano .env.postiz-cli          # POSTIZ_API_KEY (Settings > Public API) et POSTIZ_API_URL
+./scripts/postiz integrations:list
+```
+
+Si la dernière commande renvoie du JSON, tout est en place. Un 401 signale une clé
+invalide ; du HTML au lieu du JSON signale un `POSTIZ_API_URL` sans le suffixe `/api`.
+
+`analytics:platform` renvoie toujours `[]` sur cette instance, et ce n'est pas une
+erreur de configuration : seuls dix providers implémentent la méthode `analytics()`
+côté Postiz (Facebook, Instagram, Threads, X, LinkedIn Page, YouTube, TikTok,
+Pinterest, GMB), et Mastodon n'en fait pas partie — `mastodon.provider.ts` ne
+définit pas cette méthode. Rien ne remontera tant qu'un canal analytique ne sera pas
+connecté.
+
+### Pourquoi un wrapper plutôt que `npm install -g postiz`
+
+`./scripts/postiz` appelle le CLI via `npx` à une version épinglée et charge
+`.env.postiz-cli`. Rien n'est installé globalement : ce dépôt n'a pas de
+`package.json`, et un `npm install` local y déposerait `package.json`,
+`package-lock.json` et `node_modules/` sans rapport avec une stack docker-compose.
+L'épinglage suit la même logique que `POSTIZ_VERSION` pour l'image Docker.
+
+**Ne jamais lancer `postiz auth:login`.** Cette commande s'authentifie contre le
+cloud Postiz (`cli-auth.postiz.com`, `api.postiz.com`), pas contre cette instance, et
+écrit `~/.postiz/credentials.json`. Or le CLI lit ce fichier **en priorité** sur
+`POSTIZ_API_KEY` et `POSTIZ_API_URL` (`src/config.ts` du dépôt `postiz-agent`) : une
+fois créé, toutes les commandes partiraient silencieusement vers le cloud. Le wrapper
+avertit si le fichier est présent, mais ne le supprime pas de lui-même.
+
+### Skill Claude Code
+
+`.claude/skills/postiz/SKILL.md` est le skill officiel, **adapté à ce dépôt** et
+versionné à cet endroit (le `.gitignore` exclut `.claude/` sauf `skills/`). Trois
+écarts par rapport à l'amont sont documentés en tête du fichier : passage par
+`./scripts/postiz`, interdiction des commandes `auth:*`, indisponibilité des
+fonctions IA. Le reste du fichier est le texte amont intact, ce qui permet de
+rejouer la comparaison lors d'une mise à jour :
+
+```bash
+curl -s https://raw.githubusercontent.com/gitroomhq/postiz-agent/main/SKILL.md \
+  | diff - .claude/skills/postiz/SKILL.md
+```
+
+L'installation passe volontairement par ce fichier plutôt que par
+`npx skills add gitroomhq/postiz-agent` : le skill n'est qu'un Markdown, le copier
+à la main le garde confiné au dépôt, versionné et lisible avant exécution.
+
 ## Dépannage
 
 **`postiz` reste `unhealthy`** — `make logs`. Causes habituelles : variable

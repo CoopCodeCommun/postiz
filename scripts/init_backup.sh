@@ -288,7 +288,11 @@ if [ -n "$PLANIF" ]; then
   # confondre "vide" et "illisible" ferait ecrire une seule ligne par-dessus
   # un crontab existant qu'on n'a simplement pas reussi a lire, effacant les
   # taches d'autres services sur un serveur mutualise.
-  CRONTAB_SORTIE="$(crontab -l 2>&1)"; CRONTAB_RC=$?
+  # Le `&& ... || CRONTAB_RC=$?` est INDISPENSABLE : avec `set -e`, une simple
+  # affectation `VAR="$(cmd)"; RC=$?` tue le script des que cmd sort non nul --
+  # donc dans le cas le plus courant, celui d'un crontab encore vide. La ligne
+  # suivante doit rester une liste && / || pour que `set -e` ne s'applique pas.
+  CRONTAB_SORTIE="$(crontab -l 2>&1)" && CRONTAB_RC=0 || CRONTAB_RC=$?
   if [ "$CRONTAB_RC" -eq 0 ]; then
     CRON_ACTUEL="$CRONTAB_SORTIE"
   elif printf '%s' "$CRONTAB_SORTIE" | grep -qi "no crontab"; then
