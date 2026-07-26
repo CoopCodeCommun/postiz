@@ -152,8 +152,11 @@ MASTODON_CLIENT_SECRET=
 # "linkedin" couvre donc aussi les Pages LinkedIn, et "instagram" couvre les deux
 # variantes Instagram -- pas besoin de lister les identifiants a tiret.
 #
-# Exemple ci-dessous : tout est exclu SAUF mastodon, instagram, linkedin (+ main).
-EXCLUDE_QUEUE=bluesky,devto,discord,dribbble,facebook,gmb,hashnode,kick,lemmy,listmonk,medium,mewe,moltbook,nostr,pinterest,reddit,skool,slack,telegram,threads,tiktok,tumblr,twitch,vk,whop,wordpress,wrapcast,x,youtube
+# Exemple ci-dessous : tout est exclu SAUF mastodon, instagram, linkedin,
+# facebook (+ main). Note : une seule application Meta couvre les Pages Facebook
+# ET les comptes Instagram Business (memes identifiants FACEBOOK_APP_*), mais ce
+# sont bien DEUX files de taches distinctes -- garder les deux.
+EXCLUDE_QUEUE=bluesky,devto,discord,dribbble,gmb,hashnode,kick,lemmy,listmonk,medium,mewe,moltbook,nostr,pinterest,reddit,skool,slack,telegram,threads,tiktok,tumblr,twitch,vk,whop,wordpress,wrapcast,x,youtube
 
 # --- Temporal UI (profile "debug" uniquement, jamais expose via Traefik) ---
 # Port loopback local. 8080 est deliberement EVITE : deja utilise par
