@@ -129,7 +129,7 @@ Puis configurer la sauvegarde : `make init` (voir [`scripts/README.md`](./script
 
 | Point | Ce dépôt | Pourquoi |
 |---|---|---|
-| Image `postiz` | Épinglée `POSTIZ_VERSION` (`v2.22.1`), jamais `:latest` | Évite qu'un `pull` de routine saute une version majeure sans prévenir. **`version.txt` du dépôt amont n'est pas fiable** (il retarde toujours d'une version ou plus sur le vrai tag git) — se fier uniquement au tag git réel. La stack Temporal (orchestrator, `RUN_CRON`, `/health/status`) n'existe qu'à partir des versions 2.x : ne jamais épingler une version antérieure avec ce compose |
+| Image `postiz` | Épinglée `POSTIZ_VERSION` (`v2.23.0`), jamais `:latest` | Évite qu'un `pull` de routine saute une version majeure sans prévenir. **`version.txt` du dépôt amont n'est pas fiable** (il retarde toujours d'une version ou plus sur le vrai tag git) — se fier uniquement au tag git réel. La stack Temporal (orchestrator, `RUN_CRON`, `/health/status`) n'existe qu'à partir des versions 2.x : ne jamais épingler une version antérieure avec ce compose |
 | `./data/config`, `./data/uploads`, `./data/postgres` | Bind mounts (pas de volumes Docker nommés) | Permet la sauvegarde borg de tout le dossier en une archive, et protège `./data/postgres` d'un `docker compose down -v` accidentel |
 | `container_name`, noms de routers/services Traefik | Aucun `container_name` ; labels Traefik dérivés de `${COMPOSE_PROJECT_NAME}` | Les noms de conteneurs Docker et les noms de routers/services Traefik sont tous les deux globaux (à l'hôte Docker, et à l'instance Traefik respectivement), pas namespacés par projet — évite les collisions avec d'autres stacks du même serveur |
 | Elasticsearch (Temporal) | Retiré (`ENABLE_ES=false`), visibilité SQL à la place | Évite une dépendance à un réglage noyau (`vm.max_map_count`) et économise ~700 Mo de RAM. **Point à surveiller** : Postiz recherche les workflows par l'attribut `postId` (pour annuler un post supprimé) — cet attribut est enregistré par défaut en type `Text`, qui ne se comporte pas comme un `Keyword` sur une égalité exacte en visibilité SQL. D'où l'étape "pré-créer les attributs" de l'installation ci-dessus. Après le premier déploiement, supprimer un post programmé de test et confirmer qu'il ne part pas quand même |
@@ -406,6 +406,305 @@ connecter qu'à une seule instance Mastodon**. Le provider « M. Instance »
 (`mastodon-custom`), qui déclarerait l'application tout seul et permettrait
 plusieurs instances, existe dans le code mais est **désactivé en v2.22.1**
 (`integration.manager.ts` : `// new MastodonCustomProvider()`).
+
+## Connecter Instagram et Facebook (apps Meta)
+
+Rédigé le 2026-07-30 depuis les écrans réels, en connectant `@lafilature_villeurbanne`.
+Les consoles Meta changent souvent : si un libellé ne correspond plus, se fier à la logique
+(quel App ID, quels scopes, quelle URI) plutôt qu'au chemin exact.
+
+### 1. Profil, Page, compte professionnel
+
+Un **profil** est une personne, une **Page** est une entité administrée depuis un profil.
+La distinction décide de ce qui est automatisable :
+
+- **Facebook interdit à tout outil tiers de publier sur un profil personnel** (API fermée en
+  2018). Aucun réglage ne contourne ça — d'où le nom du provider « Facebook **Page** ».
+- **Instagram** exige un compte **professionnel** (Business ou Creator). Un compte personnel
+  n'est pas publiable par API. La conversion se fait dans les réglages et est réversible.
+- LinkedIn autorise les deux, d'où deux providers distincts.
+
+**Distinguer une Page d'un profil** — ouvrir `https://www.facebook.com/<id-ou-nom>` :
+
+| Indice | Page | Profil |
+|---|---|---|
+| URL | nom personnalisé (`/lafilaturevilleurbanne`) | redirige vers `profile.php?id=…` |
+| Onglets | Followers, avis | **Ami(e)s** |
+| Bouton | Suivre / J'aime | Ajouter |
+
+Un onglet « Ami(e)s » ⇒ profil ⇒ **Postiz ne pourra jamais y publier**.
+Attention : les deux peuvent coexister sous le même nom. Ne pas conclure qu'une Page n'existe
+pas parce que « Pages que vous gérez » est vide — cette liste ne montre que les Pages **dont on
+est administrateur**.
+
+### 2. Les cinq providers et leurs prérequis
+
+| Provider (interface) | Identifiant | Publie sur | Prérequis |
+|---|---|---|---|
+| Facebook Page | `facebook` | une Page Facebook | Page **administrée** + app Meta |
+| Instagram (Facebook Business) | `instagram` | compte IG pro **rattaché à une Page** | Page administrée + IG pro lié |
+| Instagram (Standalone) | `instagram-standalone` | compte IG pro, **sans Page** | app Meta seule |
+| LinkedIn | `linkedin` | profil personnel | voir §8 |
+| LinkedIn Page | `linkedin-page` | Page entreprise | voir §8 |
+
+`facebook`, `instagram` et `linkedin-page` ont `isBetweenSteps = true` : après l'autorisation,
+Postiz demande **quelle** page connecter. C'est normal.
+
+**Câblage des variables** (vérifié dans le code) :
+
+| Provider | Variables lues |
+|---|---|
+| `facebook` | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` |
+| `instagram` (Business) | **les mêmes** `FACEBOOK_APP_*` |
+| `instagram-standalone` | `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` |
+
+Conséquences utiles :
+
+- Facebook Page et Instagram Business se configurent avec **un seul** couple d'identifiants.
+- Standalone a ses propres variables : les trois providers **peuvent cohabiter**.
+- **Une app Meta peut servir plusieurs instances Postiz et plusieurs organisations.** Une app
+  n'est liée ni à une Page ni à une personne morale : c'est un client OAuth. Il suffit de
+  déclarer plusieurs URI de redirection. C'est le modèle des outils de publication ; l'app
+  appartient à l'opérateur et publie pour ses membres. Un seul dossier de vérification
+  d'entreprise au lieu d'un par structure.
+
+**Quelle variante Instagram choisir** — Standalone si on n'administre pas de Page, ou si on veut
+que le canal reste indépendant des droits Facebook. Business seulement pour le **suivi des
+hashtags et les insights étendus** (Meta l'écrit sur l'écran de configuration). Pour publier et
+programmer, Standalone suffit.
+
+Ne pas connecter les deux variantes pour un même compte Instagram : on obtiendrait deux canaux
+vers la même cible, avec le risque de publier deux fois. Pour changer de variante, **remplacer**
+le canal.
+
+### 3. Créer l'application Meta
+
+Console : <https://developers.facebook.com/apps/>. Compte développeur requis (acceptation des
+conditions Meta au premier usage).
+
+> L'ancien formulaire en 5 étapes n'est plus accessible : une modale « Il existe une nouvelle
+> façon de créer des applications avec Meta » **bloque la page et ne se ferme pas**. Passer par
+> son bouton « Créer une application ».
+
+Parcours : Détails (nom + e-mail) → Cas d'utilisation → Entreprise → Conditions requises →
+Vue d'ensemble.
+
+- **Cas d'utilisation** : cocher « **Gérer les messages et les contenus sur Instagram** ».
+  Ajouter « **Tout gérer sur votre Page** » pour couvrir Facebook Page — les deux sont
+  combinables. Meta grise les cas incompatibles et affiche un avertissement le cas échéant.
+  Ne pas prendre un cas centré Facebook Login : il donne les mauvaises autorisations.
+- **Entreprise** : « Je ne veux pas associer de portefeuille business pour le moment » suffit en
+  développement. Un portefeuille **vérifié** sera exigé pour publier l'app.
+- **Conditions requises** : « Aucune exigence identifiée » en mode développement.
+- Le bouton final vaut **acceptation des conditions générales Meta**.
+
+Le nom de l'app s'affiche dans l'écran d'autorisation vu par le compte qui autorise. Modifiable
+ensuite sans changer l'App ID.
+
+Une app **en mode développement** fonctionne pleinement sur les comptes et Pages administrés par
+les personnes déclarées dans ses rôles. C'est suffisant pour publier réellement. L'App Review et
+la vérification d'entreprise ne servent qu'à sortir du mode développement (donc à publier sur des
+Pages de tiers).
+
+### 4. ⚠️ Deux App ID différents — ne pas les confondre
+
+Le cas d'utilisation Instagram expose **son propre** identifiant, distinct de celui de
+l'application :
+
+| Ce qu'on lit dans la console | Où ça va |
+|---|---|
+| App ID de l'app (visible dans l'URL du tableau de bord) | `FACEBOOK_APP_ID` |
+| **ID d'app Instagram** (écran « Configuration de l'API avec la connexion Instagram ») | `INSTAGRAM_APP_ID` |
+
+Les confondre produit une erreur d'autorisation peu explicite. Contrôle : l'« URL d'intégration »
+affichée par Meta contient le bon `client_id`.
+
+### 5. ⚠️ Postiz exige TOUS les scopes, Meta n'en ajoute qu'une partie
+
+`checkScopes()` (`social.abstract.ts`) lève `NotEnoughScopes` si **un seul** scope manque. Or le
+bouton « Add all required permissions » n'ajoute pas les mêmes autorisations que celles demandées
+par Postiz.
+
+Pour `instagram-standalone` :
+
+| Scope exigé par Postiz | Ajouté automatiquement |
+|---|---|
+| `instagram_business_basic` | oui |
+| `instagram_business_content_publish` | **non** |
+| `instagram_business_manage_comments` | **non** |
+| `instagram_business_manage_insights` | **non** |
+
+Piège dans le piège : Meta active `instagram_manage_comments`, **sans** `business`, qui est une
+autorisation différente. Le message « toutes les autorisations requises ont été ajoutées » est
+donc trompeur.
+
+Les ajouter : cas d'utilisation → onglet **Autorisations et fonctionnalités** → « + Ajouter » sur
+chaque ligne. L'état passe à « Prête pour le test ».
+
+Pour `facebook` et `instagram` (Business), la liste attendue est respectivement
+`pages_show_list`, `pages_manage_posts`, `pages_manage_engagement`, `pages_read_engagement`,
+`business_management`, `read_insights` — et `instagram_basic`, `instagram_content_publish`,
+`instagram_manage_comments`, `instagram_manage_insights`, `pages_show_list`,
+`pages_read_engagement`, `business_management`. Même vigilance.
+
+**Certains scopes sont partagés entre deux cas d'utilisation** (mention « Trouvé dans 2 cas
+d'utilisation »). Cliquer « Ajouter » ouvre alors une **modale de confirmation** indiquant que
+l'autorisation sera aussi ajoutée à l'autre cas. Il faut la valider, sinon rien n'est enregistré —
+et l'ajout paraît silencieusement échouer.
+
+#### ⚠️⚠️ Meta injecte les permissions du cas d'utilisation, pas seulement celles demandées
+
+Symptôme, au moment de connecter le canal Facebook Page :
+
+```
+Ce contenu n’est pas disponible pour le moment
+Invalid Scopes: pages_read_user_content. This message is only shown to developers.
+Users of your app will ignore these permissions if present.
+```
+
+Le message est doublement trompeur :
+
+- il annonce que les utilisateurs « ignoreront » ces permissions, alors que **le dialogue OAuth
+  est entièrement bloqué** ;
+- il désigne un scope que **Postiz ne demande jamais** — `pages_read_user_content` n'apparaît ni
+  dans `facebook.provider.ts`, ni dans le bundle de l'image (vérifié par `grep` dans le conteneur,
+  et en reproduisant l'URL d'autorisation à la main sans ce scope : l'erreur persiste).
+
+Cause : Meta valide **l'ensemble des permissions rattachées au cas d'utilisation** de
+l'application, pas seulement celles présentes dans le paramètre `scope=`. Une permission du cas
+d'utilisation qui n'a pas été « ajoutée » est considérée comme invalide et fait échouer le dialogue.
+
+Correctif : **activer toutes les autorisations listées par le cas d'utilisation**, y compris
+celles dont Postiz n'a pas besoin (`pages_read_user_content`, et le cas échéant
+`pages_manage_metadata`). Ajouter uniquement les scopes du provider ne suffit pas.
+
+Pour diagnostiquer sans passer par l'interface Postiz, ouvrir l'URL d'autorisation à la main —
+un dialogue « Continuer en tant que … » signifie que c'est réglé :
+
+```
+https://www.facebook.com/v20.0/dialog/oauth?client_id=<FACEBOOK_APP_ID>
+  &redirect_uri=<urlencode(https://<POSTIZ_DOMAIN>/integrations/social/facebook)>
+  &state=diag&scope=pages_show_list,business_management,pages_manage_posts,
+         pages_manage_engagement,pages_read_engagement,read_insights
+```
+
+**Ne pas autoriser depuis cette URL de test** : le `state` ne correspond à aucune session Postiz,
+le retour échouerait. Relancer depuis *Ajouter un canal*.
+
+### 6. URI de redirection
+
+Forme : `https://<POSTIZ_DOMAIN>/integrations/social/<identifiant-provider>`, où l'identifiant
+est celui du tableau du §2 (`facebook`, `instagram`, `instagram-standalone`, `linkedin`,
+`linkedin-page`, `mastodon`).
+
+Le code la construit depuis `FRONTEND_URL`, que ce compose définit à `https://${POSTIZ_DOMAIN}` :
+les deux doivent correspondre **exactement**.
+
+Où la déclarer pour Standalone : cas d'utilisation Instagram → onglet « Configuration de l'API
+avec la connexion Instagram » → étape **4. Configurez la connexion professionnelle Instagram** →
+« Configurer ». Un seul champ ; « Paramètres de connexion professionnelle » permet ensuite d'en
+gérer plusieurs et de fournir les URL d'annulation et de suppression de données exigées à
+l'examen.
+
+Une app servant plusieurs instances déclare autant d'URI que de domaines.
+
+### 7. Le rôle testeur — indispensable en mode développement
+
+Sans lui, l'autorisation échoue même si tout le reste est correct.
+
+1. Console → **Rôles dans l'application** → « Ajouter des personnes » → section « Rôles
+   supplémentaires pour cette application » → **Testeur(se) Instagram** → saisir le nom de profil
+   Instagram → « Ajouter ». Le nom devient un jeton validé : **cliquer « Ajouter » deux fois**
+   (le premier clic valide la saisie, le second soumet). Statut : « En attente ».
+2. Côté Instagram, connecté avec le compte concerné : Paramètres → **Applications et sites Web**
+   → onglet **Invitations à tester** → « Accepter ».
+   Cette acceptation vaut acceptation des conditions Meta et des politiques développeur.
+   Réversible depuis la même page.
+
+### 8. Côté serveur
+
+Vérifier d'abord que les variables existent dans le `.env` : un `.env` ancien peut n'avoir que
+`FACEBOOK_APP_*`, auquel cas **ajouter** les lignes Instagram. Le compose les passe déjà
+(`${INSTAGRAM_APP_ID:-}`), rien à y modifier.
+
+```bash
+cd ~/postiz
+grep -q '^INSTAGRAM_APP_ID=' .env || printf '\nINSTAGRAM_APP_ID=<id-app-instagram>\n' >> .env
+```
+
+Le secret ne doit jamais s'afficher — ni à l'écran, ni dans l'historique, ni dans une capture de
+terminal. `read -rs` n'affiche rien et la valeur ne passe pas par la ligne de commande :
+
+```bash
+cd ~/postiz && read -rsp 'Cle secrete : ' S \
+  && printf 'INSTAGRAM_APP_SECRET=%s\n' "$S" >> .env && unset S && echo && echo AJOUTE
+```
+
+Vérifier sans révéler (un App Secret Meta fait **32** caractères) :
+
+```bash
+awk -F= '/^INSTAGRAM_APP_SECRET=/{print length($2)}' .env
+```
+
+Puis **`make reload`** — jamais `make up` seul, voir [Démarrage de
+l'orchestrator](#démarrage-de-lorchestrator--à-lire-une-fois).
+
+Contrôles après reload :
+
+```bash
+docker compose ps                       # postiz doit être (healthy)
+docker compose exec -T postiz sh -lc 'env | grep -E "^(INSTAGRAM|FACEBOOK)_APP_ID"'
+docker compose logs postiz | grep -iE "taskQueue.*(instagram|facebook)"
+```
+
+- `healthy` **prouve** que l'orchestrator tourne : le healthcheck sonde `/health/status:3002`.
+  À l'inverse, `pm2 … status: online` ne prouve rien — lors du deadlock le process était
+  `online` et le port fermé.
+- Le worker doit apparaître en `state: 'RUNNING'` pour la file concernée. La file d'un post est
+  `providerIdentifier.split('-')[0]` : `instagram-standalone` → file **`instagram`**. Si cette
+  file est dans `EXCLUDE_QUEUE`, l'interface accepte les posts et **rien ne se publie jamais**.
+- Ne pas tester les ports avec `/dev/tcp` : absent du `sh` de l'image, faux négatif garanti.
+
+### 9. Connecter le canal et vérifier
+
+Interface Postiz → **Ajouter un canal** → le provider voulu → écran d'autorisation.
+
+> ⚠️ L'écran de consentement Instagram présente chaque autorisation avec un **interrupteur**,
+> tous activés par défaut : « Voir le profil » *(requis)*, « Accéder aux commentaires »,
+> « **Accéder au contenu et le publier** », « Accéder aux statistiques ». En désactiver un seul
+> fait échouer la connexion (`NotEnoughScopes`). **Ne toucher à aucun interrupteur.**
+
+Retour attendu : `?added=<provider>&msg=Channel%20Updated`. Vérifier que le canal est réellement
+exploitable, et pas seulement affiché :
+
+```bash
+docker compose exec -T postiz-postgres psql -U postiz -d postiz -c \
+  'SELECT name, "providerIdentifier", disabled, "refreshNeeded", "inBetweenSteps", profile
+   FROM "Integration";'
+```
+
+`disabled` et `refreshNeeded` à `f` (token valide, pas de réautorisation attendue),
+`inBetweenSteps` à `f` (aucune étape de sélection en suspens), `profile` = le bon compte.
+
+### 10. Ce qui reste hors d'atteinte
+
+**Facebook Page** — l'app est prête (cas d'utilisation « Tout gérer sur votre Page », variables
+`FACEBOOK_APP_*`), mais il faut être **administrateur de la Page**. Un administrateur actuel doit
+ajouter le compte : Page → Paramètres → **Accès à la Page** → Ajouter une personne, en **accès
+Facebook complet** — Postiz demande `pages_manage_posts` et `business_management`, et un accès
+partiel expose à un refus de scope difficile à diagnostiquer. Choisir un compte déjà déclaré dans
+les rôles de l'app, sinon le mode développement le refusera.
+*Procédure non encore éprouvée de bout en bout dans ce dépôt.*
+
+**LinkedIn** — les deux providers demandent la **même** liste de scopes, incluant
+`rw_organization_admin`, `w_organization_social` et `r_organization_social`, qui relèvent de la
+**Community Management API** (pas en libre-service). Comme `checkScopes()` exige tout, **même
+publier sur un profil personnel suppose d'obtenir l'accès organisation**. Reporté.
+
+**Publier sur Instagram n'envoie rien sur Facebook** : Postiz publie canal par canal, et le token
+Standalone est obtenu avec `enable_fb_login=0`, donc sans aucune permission Facebook. Le partage
+automatique Instagram → Page existe côté Meta, mais il est indépendant de Postiz et ne concerne
+pas les publications créées par API.
 
 ## Plusieurs instances sur le même serveur
 

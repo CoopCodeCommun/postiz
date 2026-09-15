@@ -30,7 +30,7 @@ POSTIZ_DOMAIN=postiz.example.com
 # "manifest unknown" au demarrage. Le choix est donc binaire : version figee
 # avec bump manuel (ce qu'on fait), ou "latest" avec risque de saut de
 # majeure non annonce.
-POSTIZ_VERSION=v2.22.1
+POSTIZ_VERSION=v2.23.0
 
 # Secret de signature des sessions JWT. Generer avec : openssl rand -hex 32
 JWT_SECRET=CHANGEME_openssl_rand_-hex_32

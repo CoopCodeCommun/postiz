@@ -1,6 +1,6 @@
 services:
   postiz:
-    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION:-v2.22.1}
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION:-v2.23.0}
     restart: unless-stopped
     environment:
       MAIN_URL: 'https://${POSTIZ_DOMAIN:?POSTIZ_DOMAIN manquant dans .env}'
